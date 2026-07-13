@@ -1,0 +1,5 @@
+- [Project Initialization](project-initialization.md) — Milestone 1 scaffolding, dependencies, configurations and Docker settings successfully initialized.
+- [Database & Repository Layer](database-layer.md) — Milestone 2 async connection, entities, repository layer, and Alembic async migration files fully implemented.
+- [ADK Agent Framework & Shared State](agent-framework.md) — Milestone 3 base wrapper agents, Pydantic session states, structured I/O, and the Sequential/Parallel Root Agent orchestrator hierarchy completed.
+- [Prompt Engineering Agents](prompt-agents.md) — Milestone 4 Trend Analyst (with search tool), Elite Prompt Engineer, Aesthetic Art Director, and Media Psychologist sub-agents with parallel evaluation callback completed.
+- [Prompt Optimization Loop Service](prompt-optimization-loop.md) — Milestone 5 iterative 10x loop, feedback compiler, score checks (>= 90), async PostgreSQL persistence, and state publishing completed.
