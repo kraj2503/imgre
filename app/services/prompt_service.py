@@ -74,13 +74,15 @@ class PromptService:
         return compiled
 
     async def run_prompt_optimization_workflow(
-        self, user_id: str, session_id: str
+        self, user_id: str, session_id: str, user_idea: Optional[str] = None, user_edits: Optional[str] = None
     ) -> Prompt:
         """Coordinates the end-to-end trend gathering, prompt optimization loop, and database save.
 
         Args:
             user_id: The ID of the user requesting the workflow.
             session_id: The unique identifier for this daily execution session.
+            user_idea: Optional starting idea or raw prompt provided by the user.
+            user_edits: Optional edits or direct feedback to refine the prompt.
 
         Returns:
             The persisted Prompt database model record.
@@ -105,9 +107,13 @@ class PromptService:
             auto_create_session=True,
         )
 
+        trend_text = "Gather and analyze the latest visual art, fashion, and photography trends."
+        if user_idea:
+            trend_text += f" Pay special attention to the user's initial creative concept or starting prompt: '{user_idea}'."
+
         trend_query = Content(
             role="user",
-            parts=[Part(text="Gather and analyze the latest visual art, fashion, and photography trends.")],
+            parts=[Part(text=trend_text)],
         )
 
         async for event in trend_runner.run_async(
@@ -144,6 +150,18 @@ class PromptService:
                 f"Generate a highly descriptive image prompt optimized for modern generators based on the following trend summary:\n"
                 f"{trend_data}\n\n"
             )
+            if user_idea:
+                gen_instruction += (
+                    f"The user has provided the following creative starting concept or image idea. "
+                    f"You MUST center the generated prompt around this concept:\n"
+                    f"'{user_idea}'\n\n"
+                )
+            if user_edits:
+                gen_instruction += (
+                    f"The user has provided the following explicit instructions/edits to refine the previous concept. "
+                    f"You MUST apply these edits and visual instructions:\n"
+                    f"'{user_edits}'\n\n"
+                )
             if compiled_feedback:
                 gen_instruction += (
                     f"Prior generation attempts did not meet our high-quality thresholds. "

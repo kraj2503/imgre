@@ -32,3 +32,9 @@ class AgentWorkflowState(BaseModel):
     image_variations: List[Dict[str, Any]] = Field(default_factory=list)
     selected_best_image_id: Optional[int] = None
     image_approved: bool = False
+
+    # Image Review Metrics
+    aesthetic_image_score: float = 0.0
+    aesthetic_image_approved: bool = False
+    human_appeal_image_score: float = 0.0
+    human_appeal_image_approved: bool = False

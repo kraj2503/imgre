@@ -5,7 +5,8 @@ from app.agents.base import BaseAppAgent
 from app.schemas.agent_schemas import (
     TrendAnalysisOutput,
     PromptGenerationOutput,
-    ReviewOutput
+    ReviewOutput,
+    RankingOutput
 )
 
 # ----------------- Callbacks & State Synchronizers -----------------
@@ -66,6 +67,32 @@ async def prompt_review_parallel_after_callback(ctx):
 
     # Prompt is approved only if BOTH reviewers approve
     ctx.state["prompt_approved"] = aes_approved and psych_approved
+
+async def image_ranking_after_callback(ctx):
+    """Unpacks the image ranking output and sets selected_best_image_id in state."""
+    ranking_data = ctx.state.get("temp:image_ranking")
+    if ranking_data:
+        ctx.state["selected_best_image_id"] = ranking_data.get("selected_image_id")
+
+async def aesthetic_image_review_after_callback(ctx):
+    """Logs aesthetic image review results."""
+    review = ctx.state.get("temp:aesthetic_image_review")
+    if review:
+        ctx.state["aesthetic_image_score"] = float(review.get("score", 0.0))
+        ctx.state["aesthetic_image_approved"] = bool(review.get("approved", False))
+
+async def human_appeal_image_review_after_callback(ctx):
+    """Logs human appeal image review results."""
+    review = ctx.state.get("temp:human_appeal_image_review")
+    if review:
+        ctx.state["human_appeal_image_score"] = float(review.get("score", 0.0))
+        ctx.state["human_appeal_image_approved"] = bool(review.get("approved", False))
+
+async def image_review_parallel_after_callback(ctx):
+    """Executes after both parallel image reviews complete, calculating joint pipeline approval."""
+    aes_approved = ctx.state.get("aesthetic_image_approved", False)
+    human_approved = ctx.state.get("human_appeal_image_approved", False)
+    ctx.state["image_approved"] = aes_approved and human_approved
 
 # ----------------- Specialized Agents Definitions -----------------
 
@@ -179,38 +206,92 @@ prompt_review_subagent = ParallelAgent(
     after_agent_callback=prompt_review_parallel_after_callback
 )
 
-# ----------------- Image Agents Skeletons (Milestones 6) -----------------
+# ----------------- Image Agents (Milestones 6) -----------------
 
 # 4. Image Generation Agent
 image_generation_agent = BaseAppAgent(
     name="Image_Generation_Agent",
     description="Generates visual image variations from approved prompts.",
-    instruction="Describe or generate multiple variations from the approved prompt."
+    instruction="Generate multiple visual variations from the approved prompt.",
+    static_instruction="You are an expert Creative Assistant coordinating image generation requests."
 )
 
 # 5. Image Ranking Agent
 image_ranking_agent = BaseAppAgent(
     name="Image_Ranking_Agent",
-    description="Selects the highest quality and most faithful image variation.",
-    instruction="Compare and rank the given image variations to select the absolute best execution."
+    description="Selects the highest quality and most faithful image variation from the generated choices.",
+    static_instruction="""
+    You are a master Creative Director and visual art ranking expert.
+    Your task is to review 5 image variations generated for a given prompt and select the absolute best execution based on:
+    - Faithfulness to the original detailed prompt text.
+    - Detail level, rendering clarity, and high photographic quality.
+    - Composition, focal point, and absence of obvious rendering glitch patterns.
+    - Harmonious lighting and colors.
+
+    You will be provided with multiple images alongside their Database IDs. Identify each image by its ID.
+    You must output:
+    1. The selected image ID (an integer corresponding to the ID given for the best image).
+    2. An ordered list of all the image IDs, ranked from best to worst.
+
+    Structure your response strictly matching the RankingOutput schema. Do not output anything outside the JSON.
+    """,
+    output_schema=RankingOutput,
+    output_key="temp:image_ranking",
+    after_agent_callback=image_ranking_after_callback
 )
 
 # 6. Image Review Agents (Parallel Execution)
 aesthetic_image_review_agent = BaseAppAgent(
     name="Aesthetic_Image_Review_Agent",
     description="Verifies the chosen image for rendering artifacts, technical flaws, and anatomic issues.",
-    instruction="Analyze the selected image for technical rendering flaws, pixel artifacts, or rendering issues."
+    static_instruction="""
+    You are an elite Visual Quality Assurance Engineer.
+    Your task is to analyze the selected best image for rendering artifacts, technical flaws, and anatomical issues.
+    Specifically evaluate:
+    - Textures and fine details (look for noise, blurriness, or blocky artifacts).
+    - Geometry and anatomy (look for extra limbs, warped features, or nonsensical structural connections).
+    - Lighting and shadow consistency (ensure shadows fall realistically and light sources are consistent).
+
+    Provide:
+    1. A score from 0 to 100 based on aesthetic and technical execution.
+    2. A boolean approval (True if score is 90 or above, otherwise False).
+    3. A list of constructive visual critiques and details of any artifacts.
+
+    Structure your response strictly matching the ReviewOutput schema. Do not output anything outside the JSON.
+    """,
+    output_schema=ReviewOutput,
+    output_key="temp:aesthetic_image_review",
+    after_agent_callback=aesthetic_image_review_after_callback
 )
 
 human_appeal_image_review_agent = BaseAppAgent(
     name="Human_Appeal_Image_Review_Agent",
     description="Verifies the chosen image for raw beauty, comfort, luxury, and consumer engagement.",
-    instruction="Evaluate if this image is exceptionally attractive, comfortable, and engaging to view."
+    static_instruction="""
+    You are an expert Content Director and Human Psychology Reviewer.
+    Your task is to evaluate the selected image for raw visual beauty, emotional resonance, luxury, comfort, and general consumer engagement.
+    Specifically evaluate:
+    - Emotional resonance (does the image evoke a strong, positive, or compelling human emotion?).
+    - Visual beauty and comfort (is the image inviting, aesthetically pleasant, and satisfying to view?).
+    - Luxury and elegance (does it convey premium quality or high production value?).
+    - Concept uniqueness (does the scene stand out and capture attention?).
+
+    Provide:
+    1. A score from 0 to 100 based on human appeal and engagement.
+    2. A boolean approval (True if score is 90 or above, otherwise False).
+    3. A list of emotional and psychological critiques.
+
+    Structure your response strictly matching the ReviewOutput schema. Do not output anything outside the JSON.
+    """,
+    output_schema=ReviewOutput,
+    output_key="temp:human_appeal_image_review",
+    after_agent_callback=human_appeal_image_review_after_callback
 )
 
 image_review_subagent = ParallelAgent(
     name="Image_Review_Subagent",
-    sub_agents=[aesthetic_image_review_agent, human_appeal_image_review_agent]
+    sub_agents=[aesthetic_image_review_agent, human_appeal_image_review_agent],
+    after_agent_callback=image_review_parallel_after_callback
 )
 
 # ----------------- Root Orchestrator Agent -----------------

@@ -5,12 +5,16 @@ import logging
 import uvicorn
 from datetime import datetime
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 # App imports
 from app.config import settings
 from app.database import async_session_factory
 from app.database.prompt_repository import PromptRepository
+from app.database.image_repository import ImageRepository
 from app.services.prompt_service import PromptService
+from app.services.image_service import ImageService
+from app.api.api import api_router
 from google.adk.sessions import InMemorySessionService
 
 # Configure logging using standard library logging
@@ -23,6 +27,13 @@ logger = logging.getLogger("imgre_main")
 # Instantiate FastAPI application
 app = FastAPI(title=settings.PROJECT_NAME)
 
+# Mount static files directory to serve generated PNG visual assets
+os.makedirs("static/images", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# Include the main API router registry
+app.include_router(api_router, prefix=settings.API_V1_STR)
+
 @app.get("/")
 async def read_root():
     return {
@@ -34,18 +45,15 @@ async def read_root():
 
 async def execute_prompt_loop():
     """Executes a single iteration of the Multi-Agent Prompt Optimization Loop."""
-    logger.info("Initializing Imgre Prompt Optimization Loop...")
+    logger.info("Initializing Imgre Prompt Optimization Loop CLI Runner...")
 
-    # Generate unique session parameters
-    session_id = f"daily-session-{datetime.now().strftime('%Y-%m-%d-%H%M%S')}"
+    session_id = f"cli-prompt-session-{datetime.now().strftime('%Y-%m-%d-%H%M%S')}"
     user_id = "mvp_cli_operator"
 
     logger.info(f"User ID: {user_id} | Session ID: {session_id}")
 
     try:
-        # Create asynchronous database session context
         async with async_session_factory() as db_session:
-            # Instantiate Repositories and Services
             prompt_repo = PromptRepository(db_session)
             session_service = InMemorySessionService()
             prompt_service = PromptService(
@@ -78,6 +86,60 @@ async def execute_prompt_loop():
         logger.error(f"Execution failed with error: {e}", exc_info=True)
         raise
 
+async def execute_combined_loop():
+    """Executes the combined Prompt loop followed by the Image pipeline via CLI."""
+    logger.info("Initializing Imgre End-to-End Pipeline CLI Runner...")
+
+    session_id = f"cli-combined-session-{datetime.now().strftime('%Y-%m-%d-%H%M%S')}"
+    user_id = "mvp_cli_operator"
+
+    try:
+        async with async_session_factory() as db_session:
+            prompt_repo = PromptRepository(db_session)
+            image_repo = ImageRepository(db_session)
+            session_service = InMemorySessionService()
+
+            # 1. Run prompt service
+            prompt_service = PromptService(prompt_repo, session_service)
+            logger.info("Starting Prompt Optimization workflow...")
+            db_prompt = await prompt_service.run_prompt_optimization_workflow(
+                user_id=user_id,
+                session_id=session_id
+            )
+            logger.info(f"Prompt loop finished. Created Prompt ID: {db_prompt.id}")
+
+            # 2. Run image service
+            image_service = ImageService(prompt_repo, image_repo, session_service)
+            logger.info(f"Starting Image Generation & Review pipeline for Prompt ID {db_prompt.id}...")
+            image_ids = await image_service.run_image_pipeline_for_prompt(
+                user_id=user_id,
+                session_id=session_id,
+                prompt_id=db_prompt.id
+            )
+
+            # Fetch the best image
+            images = await image_repo.get_by_prompt_id(db_prompt.id)
+            best_image = next((img for img in images if img.is_best), None)
+
+            print("\n" + "="*60)
+            print("        END-TO-END PIPELINE RUN SUCCESSFUL")
+            print("="*60)
+            print(f"Prompt ID          : {db_prompt.id}")
+            print(f"Prompt Text        : {db_prompt.prompt[:100]}...")
+            print(f"Aesthetic Score    : {db_prompt.aesthetic_score}/100.0")
+            print(f"Psychology Score   : {db_prompt.psychology_score}/100.0")
+            print("-"*60)
+            print(f"Generated Images   : {len(image_ids)} variations created")
+            if best_image:
+                print(f"Selected Best Image: ID={best_image.id}")
+                print(f"Image File Path    : {best_image.file_path}")
+                print(f"Review Score       : {best_image.score}/100.0")
+            print("="*60 + "\n")
+
+    except Exception as e:
+        logger.error(f"End-to-End Execution failed: {e}", exc_info=True)
+        raise
+
 def run_migrations():
     """Runs database migrations using Alembic."""
     import subprocess
@@ -108,6 +170,11 @@ def main():
         help="Run a single-pass of the multi-agent prompt optimization loop"
     )
     group.add_argument(
+        "--run-combined",
+        action="store_true",
+        help="Run end-to-end prompt loop and immediate image pipeline"
+    )
+    group.add_argument(
         "--migrate",
         action="store_true",
         help="Apply outstanding database migrations using Alembic"
@@ -122,6 +189,8 @@ def main():
 
     if args.run:
         asyncio.run(execute_prompt_loop())
+    elif args.run_combined:
+        asyncio.run(execute_combined_loop())
     elif args.migrate:
         run_migrations()
     else:
